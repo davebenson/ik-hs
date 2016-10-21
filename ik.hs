@@ -16,16 +16,36 @@ simplifySubexprForFlatMap identityInt testExpr =
     rv -> [rv]
 
 -- split constants
-simplifyConstants :: [Expr] -> ([Expr], [Expr], [Expr])
-...
+groupConstants :: [Expr] -> ([Expr], [Expr], [Expr])
+groupConstants expr_list =
+  foldl categorizeForFold ([], [], []) expr_list
+     where categorizeForFold (intexprs floatexprs otherexprs) expr =
+       case expr of
+         Exact _ -> (expr:intexprs floatexprs otherexprs)
+         Float _ -> (intexprs expr:floatexprs otherexprs)
+         _ -> (intexprs floatexprs expr:otherexprs)
 
 simplifyExpr :: Expr -> Expr
 simplifyExpr Product elements =
   case flatmap (simplifySubexprForFlatMap 1) elements of
     [] -> Exact 1
     [x] -> x
-    other ->
-      .... split constants other
+    simplified ->
+      case (groupConstants simplified) of
+        ([], [], _) -> Product simplified
+        ([_], [], _) -> Product simplified
+        ([], [_], _) -> Product simplified
+        (c1, c2, nonconst) ->
+          case ((productOfConstants c1 c2) ++ nonconst) of
+            [] -> Exact 1
+            [x] -> x
+            other ->
+              if (...contains 0) then (Exact 0)
+              else Product other
+
+productOfConstants :: [Expr] -> [Expr] -> []
+productOfConstants [] [] = []
+
 simplifyExpr Sum elements =
   case flatmap (simplifySubexprForFlatMap 0) elements of
     [] -> Exact 1
