@@ -1,5 +1,6 @@
 
 import Debug.Trace (trace)
+import Data.List (intersperse)
 
 data Expr = CosParam Int
           | SinParam Int
@@ -9,6 +10,27 @@ data Expr = CosParam Int
           | Product [Expr]
           | Negate Expr
           deriving (Show)
+
+addParens str = "(" ++ str ++ ")"
+exprToString' (CosParam i) containingPrec =
+   "cos o" ++ (show i)
+exprToString' (SinParam i) containingPrec =
+   "sin o" ++ (show i)
+exprToString' (Exact i) containingPrec =
+   (show i)
+exprToString' (ConstFloat i) containingPrec =
+   (show i)
+exprToString' (Sum exprs) 0 =
+   concat (intersperse " + " (map (\ e -> exprToString' e 0) exprs))
+exprToString' (Sum exprs) _ =
+   addParens (exprToString' (Sum exprs) 0)
+exprToString' (Product exprs) _ =
+   concat (intersperse " * " (map (\ e -> exprToString' e 0) exprs))
+exprToString' (Negate expr) _ =
+   "-" ++ (exprToString' expr 2)
+exprToString expr = exprToString' expr 0
+
+
 
 -- helper function for Sum and Product which have simple integer identities.
 simplifySubexprForFlatMap :: Int -> Expr -> [Expr]
@@ -105,10 +127,10 @@ simplifyExprProduct = simplifyExprProduct_Negates . simplifyProductOf0 . simplif
 
 simplifyExpr :: Expr -> Expr
 
-simplifyExpr (Product elements) = simplifyExprProduct (Product elements)
+simplifyExpr (Product elements) = simplifyExprProduct (Product (map simplifyExpr elements))
 
 simplifyExpr (Sum elements) =
-  case elements >>= simplifySubexprForSum of
+  case (map simplifyExpr elements) >>= simplifySubexprForSum of
     [] -> Exact 0
     [x] -> x
     simplified ->
@@ -123,9 +145,13 @@ simplifyExpr (Sum elements) =
             other ->
               Sum other
 
-simplifyExpr (Negate (Negate x)) = simplifyExpr x
-simplifyExpr (Negate (Exact x)) = Exact (-x)
-simplifyExpr (Negate (ConstFloat x)) = ConstFloat (-x)
+simplifyExpr (Negate expr) =
+  case simplifyExpr expr of
+    (Negate x) -> x
+    (Exact x) -> Exact (-x)
+    (ConstFloat x) -> ConstFloat (-x)
+    x -> Negate x
+
 
 simplifyExpr other = other
 
@@ -133,6 +159,21 @@ simplifyExpr other = other
 type AffineExpr = (Expr, Expr, Expr, Expr,
                    Expr, Expr, Expr, Expr,
                    Expr, Expr, Expr, Expr)
+affineToString (a11, a12, a13, a14, 
+                a21, a22, a23, a24, 
+                a31, a32, a33, a34) =
+  "[ " ++ (exprToString a11) ++ "\n" ++
+  "  " ++ (exprToString a12) ++ "\n" ++
+  "  " ++ (exprToString a13) ++ "\n" ++
+  "  " ++ (exprToString a14) ++ ";\n" ++
+  "  " ++ (exprToString a21) ++ "\n" ++
+  "  " ++ (exprToString a22) ++ "\n" ++
+  "  " ++ (exprToString a23) ++ "\n" ++
+  "  " ++ (exprToString a24) ++ ";\n" ++
+  "  " ++ (exprToString a31) ++ "\n" ++
+  "  " ++ (exprToString a32) ++ "\n" ++
+  "  " ++ (exprToString a33) ++ "\n" ++
+  "  " ++ (exprToString a34) ++ " ]\n"
            
 affineProduct  :: AffineExpr -> AffineExpr -> AffineExpr
 affineProduct  (a11, a12, a13, a14, 
@@ -290,8 +331,11 @@ dhparams = [ Revolute 0.089159 (PiFrac 0 1) 0.0 (PiFrac 1 2),
              Revolute 0.10915 (PiFrac 0 1) 0.0 (PiFrac 1 2),
              Revolute 0.09465 (PiFrac 0 1) 0.0 (PiFrac (-1) 2),
              Revolute 0.0823 (PiFrac 0 1) 0.0 (PiFrac 0 1) ]
---main = putStrLn (show (convertDHJointParamsToAffineList (head dhparams) 3))
---main = putStrLn (show (computeAffineListProduct (convertDHJointParamsToAffineList (head dhparams) 3)))
-main = putStrLn (show (convertDHParamsToAffine dhparams))
+--main = putStrLn (concat (map show (convertDHJointParamsToAffineList (head dhparams) 3)))
+--main = putStrLn (affineToString (computeAffineListProduct (convertDHJointParamsToAffineList (head dhparams) 3)))
+--main = putStrLn (affineToString (convertDHParamsToAffine dhparams))
 --main = putStrLn (show ((convertDHParamsToAffineList dhparams)))
+main = putStrLn (affineToString ((rotateX (SinParam 0) (CosParam 0))
+                                 `affineProduct`
+                                 (rotateX (SinParam 0) (CosParam 0))))
 
