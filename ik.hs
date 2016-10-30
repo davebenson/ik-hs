@@ -1,6 +1,6 @@
 
 import Debug.Trace (trace)
-import Data.List (intersperse)
+import Data.List (intersperse, sortBy)
 
 data Expr = CosParam Int
           | SinParam Int
@@ -8,7 +8,6 @@ data Expr = CosParam Int
           | ConstFloat Double
           | Sum [Expr]
           | Product [Expr]
-          | Negate Expr
           deriving (Show)
 
 addParens str = "(" ++ str ++ ")"
@@ -20,14 +19,18 @@ exprToString' (Exact i) containingPrec =
    (show i)
 exprToString' (ConstFloat i) containingPrec =
    (show i)
-exprToString' (Sum exprs) 0 =
-   concat (intersperse " + " (map (\ e -> exprToString' e 0) exprs))
-exprToString' (Sum exprs) _ =
-   addParens (exprToString' (Sum exprs) 0)
-exprToString' (Product exprs) _ =
-   concat (intersperse " * " (map (\ e -> exprToString' e 0) exprs))
-exprToString' (Negate expr) _ =
-   "-" ++ (exprToString' expr 2)
+exprToString' (Sum exprs) prec =
+   if prec < 1 then
+     concat (intersperse " + " (map (\ e -> exprToString' e 1) exprs))
+   else
+     addParens (exprToString' (Sum exprs) 0)
+exprToString' (Product exprs) prec =
+   if prec < 2 then
+     concat (intersperse " * " (map (\ e -> exprToString' e 2) exprs))
+   else
+     addParens (exprToString' (Product exprs) 0)
+--exprToString' (Negate expr) _ =
+--   "-" ++ (exprToString' expr 2)
 exprToString expr = exprToString' expr 0
 
 
@@ -113,17 +116,17 @@ simplifyProductOf0 (Product elements) =
   else                                Product elements
 simplifyProductOf0 other = other
 
-simplifyExprProduct_Negates (Product elements) =
-  let   doFoldl (denegated, negcount) (Negate expr) = (expr:denegated, negcount+1)
-        doFoldl (denegated, negcount) (Exact (-1)) = (denegated, negcount+1)
-        doFoldl (denegated, negcount) expr = (expr:denegated, negcount)
-        (denegated, negcount) = foldl doFoldl ([], 0) elements
-  in if negcount `mod` 2 == 0 then (Product denegated)
-     else                      Negate (Product denegated)
+--simplifyExprProduct_Negates (Product elements) =
+--  let   doFoldl (denegated, negcount) (Negate expr) = (expr:denegated, negcount+1)
+--        doFoldl (denegated, negcount) (Exact (-1)) = (denegated, negcount+1)
+--        doFoldl (denegated, negcount) expr = (expr:denegated, negcount)
+--        (denegated, negcount) = foldl doFoldl ([], 0) elements
+--  in if negcount `mod` 2 == 0 then (Product denegated)
+--     else                      Negate (Product denegated)
 
 simplifyExprProduct_Negates other = other
 
-simplifyExprProduct = simplifyExprProduct_Negates . simplifyProductOf0 . simplifyExprProduct_1_and_constants
+simplifyExprProduct = simplifyProductOf0 . simplifyExprProduct_1_and_constants
 
 simplifyExpr :: Expr -> Expr
 
@@ -145,12 +148,12 @@ simplifyExpr (Sum elements) =
             other ->
               Sum other
 
-simplifyExpr (Negate expr) =
-  case simplifyExpr expr of
-    (Negate x) -> x
-    (Exact x) -> Exact (-x)
-    (ConstFloat x) -> ConstFloat (-x)
-    x -> Negate x
+--simplifyExpr (Negate expr) =
+--  case simplifyExpr expr of
+--    (Negate x) -> x
+--    (Exact x) -> Exact (-x)
+--    (ConstFloat x) -> ConstFloat (-x)
+--    x -> Negate x
 
 
 simplifyExpr other = other
@@ -199,6 +202,13 @@ affineProduct  (a11, a12, a13, a14,
       c21, c22, c23, c24, 
       c31, c32, c33, c34)
 
+applyToAffine f (a11, a12, a13, a14, 
+                 a21, a22, a23, a24, 
+                 a31, a32, a33, a34) = (f a11, f a12, f a13, f a14, 
+                                        f a21, f a22, f a23, f a24, 
+                                        f a31, f a32, f a33, f a34)
+
+simplifyAffine aff = applyToAffine (sortProducts . distributeExpr . simplifyExpr) aff
 
 affineSum :: AffineExpr -> AffineExpr -> AffineExpr
 affineSum (a11, a12, a13, a14, 
@@ -230,21 +240,23 @@ affineIdentity =
 -- Constructing the transform --
 
 
+negateExpr expr = simplifyExpr (Product [(Exact (-1)), expr])
+
 rotateX :: Expr -> Expr -> AffineExpr
 rotateX sinExpr cosExpr =
   ((Exact 1), (Exact 0), (Exact 0), (Exact 0),
-   (Exact 0),  cosExpr, simplifyExpr (Negate sinExpr), (Exact 0),
+   (Exact 0),  cosExpr, negateExpr sinExpr, (Exact 0),
    (Exact 0),  sinExpr, cosExpr, (Exact 0))
 
 rotateY :: Expr -> Expr -> AffineExpr
 rotateY sinExpr cosExpr =
   (cosExpr, (Exact 0), sinExpr, (Exact 0),
    (Exact 0),  (Exact 1), (Exact 0), (Exact 0),
-   simplifyExpr (Negate sinExpr),  (Exact 0), cosExpr, (Exact 0))
+   negateExpr sinExpr,  (Exact 0), cosExpr, (Exact 0))
 
 rotateZ :: Expr -> Expr -> AffineExpr
 rotateZ sinExpr cosExpr =
-  (cosExpr, simplifyExpr (Negate sinExpr), (Exact 0), (Exact 0),
+  (cosExpr, negateExpr sinExpr, (Exact 0), (Exact 0),
    sinExpr, cosExpr, (Exact 0), (Exact 0),
    (Exact 0), (Exact 0), (Exact 1), (Exact 0))
 
@@ -292,6 +304,58 @@ computeCosConstantAngle (PiFrac n d) =
 makeConstExpr f | f == 0.0 = Exact 0
                 | otherwise = ConstFloat f
 
+arbitraryCartesianProduct :: [[Expr]] -> [[Expr]]
+arbitraryCartesianProduct [] = [[]]
+arbitraryCartesianProduct (head:tail) =
+  let addHeadsToAllLists listoflists hvalue = (map (\ list -> hvalue : list) listoflists)
+  in  head >>= (addHeadsToAllLists (arbitraryCartesianProduct tail))
+
+
+compareTerms :: Expr -> Expr -> Ordering
+compareTerms (Exact _) (Exact _) = EQ
+compareTerms (Exact _) _ = LT
+compareTerms _ (Exact _) = GT
+compareTerms (ConstFloat _) (ConstFloat _) = EQ
+compareTerms (ConstFloat _) _ = LT
+compareTerms _ (ConstFloat _) = GT
+compareTerms (CosParam x) (CosParam y) =
+  if x < y then 
+    LT
+  else if x > y then 
+    GT
+  else
+    EQ
+compareTerms (CosParam x) _ = LT
+compareTerms _ (CosParam x) = GT
+compareTerms (SinParam x) (SinParam y) =
+  if x < y then 
+    LT
+  else if x > y then 
+    GT
+  else
+    EQ
+compareTerms (SinParam x) _ = LT
+compareTerms _ (SinParam x) = GT
+compareTerms _ _ = EQ
+  
+
+
+distributeExpr (Product elements) =
+  let toSumList (listofsumlists) (Sum list) = list : listofsumlists
+      toSumList (listofsumlists) (Product list) = (foldl toSumList [] (map distributeExpr list)) ++ listofsumlists
+      toSumList (listofsumlists) other = [other] : listofsumlists
+      sopForm = arbitraryCartesianProduct (foldl toSumList [] (map distributeExpr elements))
+      listOfProducts = map Product sopForm
+  in
+      simplifyExpr (Sum listOfProducts)
+distributeExpr (Sum elements) =
+  simplifyExpr (Sum (map distributeExpr elements))
+distributeExpr other = other
+
+sortProducts (Product elements) = Product (sortBy compareTerms elements)
+sortProducts (Sum x) = Sum (map sortProducts x)
+sortProducts x = x
+
 -- Constructing the transform --
 --                             d        theta        r       alpha
 --     (r is sometime known as a)
@@ -304,15 +368,14 @@ convertDHJointParamsToAffineList (Revolute d theta r alpha) whichJoint =
       cosAlpha = computeCosConstantAngle alpha
   in   [(translateZ (makeConstExpr d)),
         (rotateZ sinTheta cosTheta),
+        (rotateZ (SinParam whichJoint) (CosParam whichJoint)),
         (translateX (makeConstExpr r)),
-        (rotateX sinAlpha cosAlpha),
-        (rotateX (SinParam whichJoint) (CosParam whichJoint))]
+        (rotateX sinAlpha cosAlpha)]
 
 
 --convertDHJointParamsToAffine :: DHJointParams -> Int -> AffineExpr
 --convertDHJointParamsToAffine jp ind =
 --    foldl (\ j -> (convertDHJointParamsToAffineList j ind)) identityAffine jp
-
 
 convertDHParamsToAffineList :: [DHJointParams] -> [AffineExpr]
 convertDHParamsToAffineList jointParams =
@@ -331,11 +394,19 @@ dhparams = [ Revolute 0.089159 (PiFrac 0 1) 0.0 (PiFrac 1 2),
              Revolute 0.10915 (PiFrac 0 1) 0.0 (PiFrac 1 2),
              Revolute 0.09465 (PiFrac 0 1) 0.0 (PiFrac (-1) 2),
              Revolute 0.0823 (PiFrac 0 1) 0.0 (PiFrac 0 1) ]
---main = putStrLn (concat (map show (convertDHJointParamsToAffineList (head dhparams) 3)))
+
+
+--main = putStrLn (concat (map affineToString (convertDHJointParamsToAffineList (head dhparams) 3)))
 --main = putStrLn (affineToString (computeAffineListProduct (convertDHJointParamsToAffineList (head dhparams) 3)))
---main = putStrLn (affineToString (convertDHParamsToAffine dhparams))
+main = putStrLn (affineToString (simplifyAffine (convertDHParamsToAffine dhparams)))
+--main = putStrLn (concat (map affineToString (convertDHParamsToAffineList dhparams)))
+
 --main = putStrLn (show ((convertDHParamsToAffineList dhparams)))
-main = putStrLn (affineToString ((rotateX (SinParam 0) (CosParam 0))
-                                 `affineProduct`
-                                 (rotateX (SinParam 0) (CosParam 0))))
+--main = putStrLn (affineToString ((rotateX (SinParam 0) (CosParam 0)) `affineProduct` (rotateX (SinParam 0) (CosParam 0))))
+--main = putStrLn (exprToString (simplifyExpr (Product [(Negate (CosParam 0)), (Product [Negate (CosParam 0), (Exact 2)])])))
+
+--bigexpr = Sum [Product [Sum [negateExpr (Product [Sum [negateExpr (Product [SinParam 3,Sum [negateExpr (Product [CosParam 1,SinParam 2]),negateExpr (Product [SinParam 1,CosParam 2])]]),negateExpr (Product [CosParam 3,Sum [Product [CosParam 2,CosParam 1],negateExpr (Product [SinParam 2,SinParam 1])]])],CosParam 4]),Product [Sum [Product [Sum [negateExpr (Product [CosParam 1,SinParam 2]),negateExpr (Product [SinParam 1,CosParam 2])],CosParam 3],negateExpr (Product [Sum [Product [CosParam 2,CosParam 1],negateExpr (Product [SinParam 2,SinParam 1])],SinParam 3])],SinParam 4]],CosParam 5],Product [Sum [Product [Sum [negateExpr (Product [SinParam 3,Sum [negateExpr (Product [CosParam 1,SinParam 2]),negateExpr (Product [SinParam 1,CosParam 2])]]),negateExpr (Product [CosParam 3,Sum [Product [CosParam 2,CosParam 1],negateExpr (Product [SinParam 2,SinParam 1])]])],SinParam 4],Product [Sum [Product [Sum [negateExpr (Product [CosParam 1,SinParam 2]),negateExpr (Product [SinParam 1,CosParam 2])],CosParam 3],negateExpr (Product [Sum [Product [CosParam 2,CosParam 1],negateExpr (Product [SinParam 2,SinParam 1])],SinParam 3])],CosParam 4]],SinParam 5]]
+--tinyexpr = Product [negateExpr (Sum [CosParam 0, CosParam 1]), Sum [SinParam 0, SinParam 1]]
+--main = putStrLn (exprToString (sortProducts (distributeExpr bigexpr)))
+
 
